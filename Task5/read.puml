@@ -1,0 +1,27 @@
+@startuml
+title MES Dashboard: чтение списка заказов по статусу (Redis Write-Through)
+
+actor Operator as Op
+participant "MES UI" as UI
+participant "MES API" as API
+database "Redis/KeyDB" as Cache
+database "MES DB (PostgreSQL)" as DB
+
+Op -> UI : Открыть дашборд / фильтр по статусу
+UI -> API : GET /dashboard?status=MANUFACTURING_APPROVED&page=1
+
+API -> Cache : ZREVRANGE mes:orders:status:MANUFACTURING_APPROVED 0 49
+Cache --> API : [order_id...]
+
+API -> Cache : HMGET mes:order:<id1..idN> (batch)
+Cache --> API : поля для списка
+
+alt cache miss / пусто
+  API -> DB : SELECT ... WHERE status=? ORDER BY created_at DESC LIMIT 50
+  DB --> API : rows
+  API -> Cache : ZADD + HMSET (сохранить topN)
+end
+
+API --> UI : список заказов (быстро)
+UI --> Op : отображение списка
+@enduml

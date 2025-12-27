@@ -1,0 +1,29 @@
+@startuml
+title MES: изменение статуса заказа (DB -> Cache Write-Through)
+
+actor Operator as Op
+participant "MES UI" as UI
+participant "MES API" as API
+database "MES DB (PostgreSQL)" as DB
+database "Redis/KeyDB" as Cache
+
+Op -> UI : Нажать "Взять в работу"
+UI -> API : POST /orders/{id}/status {to=MANUFACTURING_STARTED}
+
+API -> DB : BEGIN
+API -> DB : UPDATE orders SET status=?, updated_at=now()\nWHERE id=? AND status=MANUFACTURING_APPROVED
+DB --> API : rows_affected=1
+API -> DB : COMMIT
+
+API -> Cache : ZREM mes:orders:status:MANUFACTURING_APPROVED <order_id>
+API -> Cache : ZADD mes:orders:status:MANUFACTURING_STARTED score=now <order_id>
+API -> Cache : HSET mes:order:<order_id> status=MANUFACTURING_STARTED updated_at=now
+API -> Cache : (опц.) ZREMRANGEBYRANK для ограничения topN
+
+API --> UI : 200 OK (успех)
+UI --> Op : заказ взят в работу
+
+alt rows_affected=0 (гонка)
+  API --> UI : 409 Conflict (уже взяли/статус изменился)
+end
+@enduml
